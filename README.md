@@ -5,12 +5,16 @@
 A user is provided CLI Application to schedule URL invocations. User should be able to CRUD a scheduled entry.   
 
 Assumptions:
+- Invocations are one time and not reoccurring. 
 - Only GET method allowed — URL invocations do not allow specified headers or body requests. 
 - No Auth implementation 
 - No restriction on number of requests or specific actions per user
 - Multiple executions of the scheduled job are okay
 - Fixed Timestamp format/time zone
 - Users can schedule requests however far in the future
+
+**Note**: Job is used interchangeable with URL invocation scheduled.
+
 ---
 # [System Design](url_scheduler.png)
 
@@ -22,44 +26,64 @@ Assumptions:
 
 3) The messages that are scheduled will then be processed by workers associated to the queue. The workers will report back to the queue if the event/s were successful.
     - If successful, the message will be removed from the queue.
-    - Otherwise, the message will be retried a certain number of times and after so many retries, the event will be handed off to a dead letter queue, which will have its own set of workers to notify team of a failure. *Future feature to  later support allowing user to set up notification policy.*   
+    - Otherwise, the message will be retried a certain number of times and after so many retries, the event will be handed off to a dead letter queue, which will have its own set of workers to notify team of a failure.*Future feature to  later support allowing user to set up notification policy.*   
+
+## Implementation: 
 
 The solution discussed above and depicted in the diagram makes use of the following AWS resources and responsibilities:
 
-- **Lambda** — A serverless function invoked on events to handle business logic. 
+- **Lambda** — A serverless function invoked on events to handle business logic. Compute size will be configured based on workload expectations.  
     - Events include:
         - API invocations where each function is associated to a specific method and path.
-        - Database Actions (DynamoDB Streams) — leveraging the TTL attribute to automatically trigger a deletion event to invoke a Lambda function to hand off request to queue to be 
-        processed.
+        - Database Actions (DynamoDB Streams) — leveraging the creation event to automatically invoke a Lambda function to hand off request to queue if request falls within certain time frame.
         - Queue (SQS) events being published and awaiting processing
     - Serverless functions allow for a lower cost since they only incur cost while running.
     - Provides the opportunity to scale and reach demand of dynamic workloads automatically.
 
 - **API Gateway** — Managed Service that allows developers to configure API configurations. This will house our REST API.
 
-- **DynamoDB** — A managed NoSQL database solution. This will allow us to achieve very quick reads and writes. Also we will be looking at leveraging Single Table Design to leverage the same table to capture invocation details (owner, time of execution, url) and current status. 
+- **DynamoDB** — A managed NoSQL database solution. This will allow us to achieve very quick reads and writes. Also we will be looking at leveraging Single Table Design to leverage the same table to capture invocation details (owner, time of execution, url) and user information. 
 
-Additional Considerations:
+- **EventBridge** — A managed event bus service that will be used to create a scheduled process to query the database to return results within a specific time frame to be handed off to our job queue.
+
+- **Simple Queue Service (SQS)** — A managed service that will allow the application to offload requests, orchestrate workers that process business logic and capture errors made. Errors will be retried and handed to a dead letter queue if exceeding retry policy. 
+
+- **Simple Notification Service (SNS)** — A managed messaging service that is based on a Pub/Sub model and will be used to notify application team if processing URL resulted in an error and being sent to the dead letter queue.  
+
+### Considerations:
 - Recovering from points of failures and outages
-    - Expected behavior should retry execution and lastly move over to a dead letter queue 
-- Notifications of tasks process (Pub/Sub)
-- How close to invocation time can we get? Is exact time invocation extremely important
+    - Expected behavior should retry execution and lastly move over to a dead letter queue for additional analysis and intervention.
+- Notifications of tasks process (Pub/Sub) 
+    - This could include a development team, user (individual requesting invocation), or a service.
+- How close to defined invocation time can we get? Is exact time invocation extremely important?
+    - Understanding that certain services do not provide immediate invocation such as TTL offering in DynamoDb. Meaning that it may be more efficient to relay on a scheduled lookup and invocation assignment  
+---
 
-Create scheduled job — user will provide identifier, url to invoke, timestamp to invoke job
+### Database Access Patterns
 
-Read scheduled job — user identifier and job identifier
+Job will have the following contents:
 
-Read scheduled jobs — user identifier and status (upcoming, succeeded, failed) 
+- Id — Unique Identifier 
+- User — User associated to
+- URL — URL to invoke
+- Time to Invoke — EPOCH Timestamp 
+- Status
 
-Update scheduled job — user identifier, task identifier, timestamp change and url to invoke
+User Access Patterns:
 
-Delete Scheduled job — user identifier, task identifier
+- Find specific job by identifier  — ID 
+- Find jobs by user identifier — User PK and Sort Key TimeStamp (Between to support between a specific range - 1 month, week, days, hours)
+- Find jobs by user identifier and status — User PK and Status and Sort by TimeStamp
 
-**Access Patterns** 
-- Find object by user identifier and identifier
-- Find object by user identifier and status
-- Find object by user identifier and ran between certain time range (1 month, week, days, hours) 
-- Get object with upcoming status and timestamp 
+Service Access Patterns:
+- Find entries with a particular status a certain range (15 minutes, 1 day) — Status and Sort Key (Between)
+
+Id — GUID HK & Timestamp SK => Primary key Combination
+USERNAME HK & TIMESTAMP SK => Secondary Key (username and range)
+STATUS HK & Timestamp SK => Secondary Key (service call)
+
+Think about combination:
+STATUS & TIMESTAMP#USERNAME
 
 ## API Design
 
@@ -72,6 +96,15 @@ Protected Endpoints
     - Output list of criteria that needs to be satisfied
 - Test: allow users to test payload against expected responses/payloads
 
+Create scheduled job — user will provide identifier, url to invoke, timestamp to invoke job
+
+Read scheduled job — user identifier and job identifier
+
+Read scheduled jobs — user identifier and status (upcoming, succeeded, failed) 
+
+Update scheduled job — user identifier, task identifier, timestamp change and url to invoke
+
+Delete Scheduled job — user identifier, task identifier
 
 ---
 ## Gotchas
@@ -85,6 +118,10 @@ Protected Endpoints
     According to [AWS](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/howitworks-ttl.html) 
 
     > The TTL deletion is meant more as a background process and happens within 48 hours of expiration. This is a great case for archiving information however not if you need to know if an item has reach the exact expiration time.
+
+- DynamoDb Keys
+
+    DynamoDb Global Secondary Indexes do not need to be unique. Meaning whether using solely a partition key or composite key values can be the same. However remember that Primary Keys (default key schema when creating table) needs to be guaranteed unique. 
 
 - DynamoDB Stream Events
     
