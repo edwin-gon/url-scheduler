@@ -59,31 +59,38 @@ The solution discussed above and depicted in the diagram makes use of the follow
     - Understanding that certain services do not provide immediate invocation such as TTL offering in DynamoDb. Meaning that it may be more efficient to relay on a scheduled lookup and invocation assignment  
 ---
 
-### Database Access Patterns
+## Database Access Patterns
 
-Job will have the following contents:
+> PK — Primary Key, HK — Hash Key, SK — Sort Key
 
-- Id — Unique Identifier 
-- User — User associated to
-- URL — URL to invoke
-- Time to Invoke — EPOCH Timestamp 
-- Status
+Job
+
+- **Id** — Unique Identifier — JOB#43d94853-ee51-40f5-9f03-2b992647abc7
+- **User** — User associated to
+- **URL** — URL to invoke
+- **Time to Invoke** — EPOCH Timestamp 
+- **Status** — Created, Scheduled, Completed, Retrying, Failed
+
+User
+
+- Id (Username) — User#CoolUser2022
 
 User Access Patterns:
 
-- Find specific job by identifier  — ID 
+- Find specific job by identifier  — Id 
 - Find jobs by user identifier — User PK and Sort Key TimeStamp (Between to support between a specific range - 1 month, week, days, hours)
 - Find jobs by user identifier and status — User PK and Status and Sort by TimeStamp
 
 Service Access Patterns:
 - Find entries with a particular status a certain range (15 minutes, 1 day) — Status and Sort Key (Between)
 
-Id — GUID HK & Timestamp SK => Primary key Combination
-USERNAME HK & TIMESTAMP SK => Secondary Key (username and range)
-STATUS HK & Timestamp SK => Secondary Key (service call)
+### Keys: 
 
-Think about combination:
-STATUS & TIMESTAMP#USERNAME
+- **Primary Key** — GUID HK
+- **Global Secondary Key** — USERNAME HK & TIMESTAMP#STATUS SK 
+- **Global Secondary Key** — STATUS HK & TIMESTAMP SK
+
+--- 
 
 ## API Design
 
@@ -98,11 +105,11 @@ Protected Endpoints
 
 Create scheduled job — user will provide identifier, url to invoke, timestamp to invoke job
 
-Read scheduled job — user identifier and job identifier
+Read scheduled job — job identifier
 
 Read scheduled jobs — user identifier and status (upcoming, succeeded, failed) 
 
-Update scheduled job — user identifier, task identifier, timestamp change and url to invoke
+Update scheduled job — user identifier, job identifier, timestamp change and url to invoke
 
 Delete Scheduled job — user identifier, task identifier
 
@@ -115,11 +122,11 @@ Delete Scheduled job — user identifier, task identifier
     
     If you are looking for near real time deletion of records, TTL attribute may not be something you can relay on. 
 
-    According to [AWS](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/howitworks-ttl.html) 
+    According to [AWS](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/howitworks-ttl.html): 
 
     > The TTL deletion is meant more as a background process and happens within 48 hours of expiration. This is a great case for archiving information however not if you need to know if an item has reach the exact expiration time.
 
-- DynamoDb Keys
+- DynamoDB Keys
 
     DynamoDb Global Secondary Indexes do not need to be unique. Meaning whether using solely a partition key or composite key values can be the same. However remember that Primary Keys (default key schema when creating table) needs to be guaranteed unique. 
 
@@ -129,7 +136,7 @@ Delete Scheduled job — user identifier, task identifier
 
     If only interested in particular events, say CREATE. You need to apply an [event filter](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html) if events are being processed by Lambda. This is can be defined as IaC, CLI or within the AWS Console and associated to Lambda.
 
-## SQS
+### SQS
 
 - A separate queue needs to be defined as a dead letter queue and not part of the deployment process of the initial queue.
 
@@ -140,7 +147,9 @@ Delete Scheduled job — user identifier, task identifier
 
 ## DynamoDB
 
+- [Change Data Capture](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Streams.html)
 - [How it work TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/howitworks-ttl.html)
+- [Event Filtering in Lambda](https://docs.aws.amazon.com/lambda/latest/dg/invocation-eventfiltering.html#filtering-cli)
 
 
 ## SQS
@@ -148,3 +157,11 @@ Delete Scheduled job — user identifier, task identifier
 - [SQS Retries](https://docs.aws.amazon.com/lambda/latest/operatorguide/sqs-retries.html)
 - [Using Lambda with SQS](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html)
 - [SQS Delay Queues](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-delay-queues.html)
+- [SetQueueAttributes](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SetQueueAttributes.html)
+
+## SNS
+
+- [Configuring SNS](https://docs.aws.amazon.com/sns/latest/dg/sns-configuring.html) 
+- [Subscribe Email](https://docs.aws.amazon.com/sns/latest/dg/sns-email-notifications.html)
+
+
